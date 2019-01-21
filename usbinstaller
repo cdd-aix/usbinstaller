@@ -1,7 +1,9 @@
 #!/bin/bash -eu
+PATH="/sbin"
 USBInstaller() {
     local block_device="$1"
     echo "$block_device"
+    mkfs.fat -F 32 "$block_device"
     exit 0
 }
 USBInstaller "$@"
