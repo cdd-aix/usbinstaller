@@ -1,9 +1,14 @@
 #!/bin/bash -eu
-PATH="/sbin:/bin"
+set -x
+PATH="/usr/bin:/sbin:/bin"
+install_mountpoint=''
+zero="$(readlink -f "$0")"
+zero_dir="${zero%/*}"
 USBInstaller() {
     local block_device="$1"
     UnmountBlockDeviceFilesystems "$block_device"
-    mkfs.fat -F 32 "$block_device"
+    MakeBootableBlockDevice "$block_device"
+    DumpUbuntuOntoDevice
     exit 0
 }
 
@@ -11,8 +16,40 @@ UnmountBlockDeviceFilesystems() {
     local block_device="$1" mountpoint
     lsblk --noheadings --output MOUNTPOINT "$block_device" |
 	while read -r mountpoint; do
-	    umount -f "$mountpoint"
+	    if [ -n "$mountpoint" ]; then
+		umount -f "$mountpoint"
+	    fi
 	done
+}
+
+MakeBootableBlockDevice() {
+    local block_device="$1"
+    mkfs.fat -F 32 "$block_device" -I
+    local uuid
+    uuid=$(lsblk --noheadings --output UUID "$block_device")
+    local mountpoint="/media/$uuid"
+    install_mountpoint="$mountpoint"
+    mkdir -p "$mountpoint"
+    mount "$block_device" "$mountpoint"
+    extlinux -i "$mountpoint"
+}
+
+DumpUbuntuOntoDevice() {
+    local ubuntu_file
+    ubuntu_file=$(FetchISO 'http://releases.ubuntu.com/18.04/ubuntu-18.04.1-desktop-amd64.iso')
+    7z x -o"$install_mountpoint" "$ubuntu_file"
+}
+
+FetchISO() {
+    local url="$1" sha_url="${1%/*}/SHA256SUMS" file="${1##*/}" sha_file="$zero_dir/SHA256SUMS"
+    local full_file="$zero_dir/$file"
+    curl --location "$sha_url" | fgrep "$file" > "$sha_file"
+    if ! (cd "$zero_dir"; sha256sum --quiet --check "$sha_file"); then
+	rm -vf "$full_file"
+	curl --location --output "$full_file" "$url"
+	(cd "$zero_dir"; sha256sum --quiet --check "$sha_file")
+    fi
+    echo "$full_file"
 }
 
 USBInstaller "$@"
