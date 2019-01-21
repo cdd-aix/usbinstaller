@@ -1,27 +1,43 @@
 #!/bin/bash -eu
-# set -x
+set -x
+set -o pipefail
 PATH="/usr/sbin:/usr/bin:/sbin:/bin"
 cleanup_dirs=()
 cleanup_devs=()
 declare -A flavors=(
-    ["ubuntu-18.04.1-desktop"]='http://releases.ubuntu.com/18.04/ubuntu-18.04.1-desktop-amd64.iso'
-    ["ubuntu-18.04.1-live-server"]='http://releases.ubuntu.com/18.04/ubuntu-18.04.1.0-live-server-amd64.iso'
+    ["desktop"]='http://releases.ubuntu.com/18.04/ubuntu-18.04.1-desktop-amd64.iso'
+    ["live-server"]='http://releases.ubuntu.com/18.04/ubuntu-18.04.1.0-live-server-amd64.iso'
+    ["server"]='http://cdimage.ubuntu.com/releases/18.04.1/release/ubuntu-18.04.1-server-amd64.iso'
 )
 zero="$(readlink -f "$0")"
 zero_dir="${zero%/*}"
 exec 3>&1
 USBInstaller() {
-    local block_device="$1" flavor="${2:-ubuntu-18.04.1-desktop}" mountpoint
+    local block_device="$1" flavor="${2:-ubuntu-18.04.1-desktop}" mountpoint ubuntu_file
     local flavor_url="${flavors[$flavor]}"
     echo "Installing $flavor_url to $block_device"
     cleanup_devs+=("$block_device")
+    ubuntu_file=$(FetchISO "$flavor_url")
+    echo "ISO file: $ubuntu_file"
     UnmountBlockDeviceFilesystems "$block_device"
     mountpoint=$(MakeBootableBlockDevice "$block_device")
     cleanup_dirs+=("$mountpoint")
-    DumpUbuntuOntoDevice "$mountpoint" "$flavor_url"
+    DumpUbuntuOntoDevice "$mountpoint" "$ubuntu_file"
     echo "Syncing"
     sync
     exit 0
+}
+
+FetchISO() {
+    local url="$1" sha_url="${1%/*}/SHA256SUMS" file="${1##*/}" sha_file="$zero_dir/SHA256SUMS"
+    local full_file="$zero_dir/$file"
+    curl --location --silent --show-error "$sha_url" | fgrep "$file" > "$sha_file"
+    if ! (cd "$zero_dir"; sha256sum --quiet --check "$sha_file" 1>&3 ); then
+	rm -vf "$full_file" 1>&3
+	curl --location --fail --output "$full_file" "$url" 1>&3
+	(cd "$zero_dir"; sha256sum --quiet --check "$sha_file") 1>&3
+    fi
+    echo "$full_file"
 }
 
 UnmountBlockDeviceFilesystems() {
@@ -58,22 +74,10 @@ MakeBootableBlockDevice() {
 }
 
 DumpUbuntuOntoDevice() {
-    local mountpoint="$1" url="$2" ubuntu_file
-    ubuntu_file=$(FetchISO "$url")
+    local mountpoint="$1" ubuntu_file="$2"
     7z x -o"$mountpoint" -aoa "$ubuntu_file"
 }
 
-FetchISO() {
-    local url="$1" sha_url="${1%/*}/SHA256SUMS" file="${1##*/}" sha_file="$zero_dir/SHA256SUMS"
-    local full_file="$zero_dir/$file"
-    curl --location --silent --show-error "$sha_url" | fgrep "$file" > "$sha_file"
-    if ! (cd "$zero_dir"; sha256sum --quiet --check "$sha_file"); then
-	rm -vf "$full_file"
-	curl --location --output "$full_file" "$url"
-	(cd "$zero_dir"; sha256sum --quiet --check "$sha_file")
-    fi
-    echo "$full_file"
-}
 
 Cleanup() {
     set +e -x
@@ -88,4 +92,7 @@ Cleanup() {
 }
 
 trap "Cleanup" EXIT
+trap 'kill -INT $$' INT
+trap 'kill -TERM $$' TERM
+trap 'kill -QUIT $$' QUIT
 USBInstaller "$@"
