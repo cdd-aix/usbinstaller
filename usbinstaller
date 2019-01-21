@@ -3,16 +3,24 @@
 PATH="/usr/sbin:/usr/bin:/sbin:/bin"
 cleanup_dirs=()
 cleanup_devs=()
+declare -A flavors=(
+    ["ubuntu-18.04.1-desktop"]='http://releases.ubuntu.com/18.04/ubuntu-18.04.1-desktop-amd64.iso'
+    ["ubuntu-18.04.1-live-server"]='http://releases.ubuntu.com/18.04/ubuntu-18.04.1.0-live-server-amd64.iso'
+)
 zero="$(readlink -f "$0")"
 zero_dir="${zero%/*}"
 exec 3>&1
 USBInstaller() {
-    local block_device="$1" mountpoint
+    local block_device="$1" flavor="${2:-ubuntu-18.04.1-desktop}" mountpoint
+    local flavor_url="${flavors[$flavor]}"
+    echo "Installing $flavor_url to $block_device"
     cleanup_devs+=("$block_device")
     UnmountBlockDeviceFilesystems "$block_device"
     mountpoint=$(MakeBootableBlockDevice "$block_device")
     cleanup_dirs+=("$mountpoint")
-    DumpUbuntuOntoDevice "$mountpoint"
+    DumpUbuntuOntoDevice "$mountpoint" "$flavor_url"
+    echo "Syncing"
+    sync
     exit 0
 }
 
@@ -50,8 +58,8 @@ MakeBootableBlockDevice() {
 }
 
 DumpUbuntuOntoDevice() {
-    local mountpoint="$1" ubuntu_file
-    ubuntu_file=$(FetchISO 'http://releases.ubuntu.com/18.04/ubuntu-18.04.1-desktop-amd64.iso')
+    local mountpoint="$1" url="$2" ubuntu_file
+    ubuntu_file=$(FetchISO "$url")
     7z x -o"$mountpoint" -aoa "$ubuntu_file"
 }
 
