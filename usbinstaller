@@ -1,0 +1,7 @@
+#!/bin/bash -eu
+USBInstaller() {
+    local block_device="$1"
+    echo "$block_device"
+    exit 0
+}
+USBInstaller "$@"
