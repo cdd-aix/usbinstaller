@@ -1,9 +1,18 @@
 #!/bin/bash -eu
-PATH="/sbin"
+PATH="/sbin:/bin"
 USBInstaller() {
     local block_device="$1"
-    echo "$block_device"
+    UnmountBlockDeviceFilesystems "$block_device"
     mkfs.fat -F 32 "$block_device"
     exit 0
 }
+
+UnmountBlockDeviceFilesystems() {
+    local block_device="$1" mountpoint
+    lsblk --noheadings --output MOUNTPOINT "$block_device" |
+	while read -r mountpoint; do
+	    umount -f "$mountpoint"
+	done
+}
+
 USBInstaller "$@"
