@@ -7,7 +7,7 @@ Shell script to create bootable Ubuntu USB that:
 
 ## Usage
 * Insert USB stick into running Linux host with this software
-* Run 'sudo usbinstaller $usbBlockDevice [$flavor]' at Linux command prompt
+* Run 'sudo [UBUNTU_RELEASE=...] [UBUNTU_FLAVOR=...] usbinstaller $usbBlockDevice' at Linux command prompt
 * Insert USB into PC, power on see Linux boot
 * Edit kernel command line with console=ttyS0,115200n8 if using ubuntu server instead of ubuntu live server
 
