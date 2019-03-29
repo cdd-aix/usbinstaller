@@ -1,30 +1,20 @@
 #!/bin/bash -eu
 set -x
 set -o pipefail
-shopt -s extglob
 PATH="/usr/sbin:/usr/bin:/sbin:/bin"
 cleanup_dirs=()
 cleanup_devs=()
-declare -A flavors=(
-    ["desktop"]='http://releases.ubuntu.com/18.04/ubuntu-18.04.1-desktop-amd64.iso'
-    ["live-server"]='http://releases.ubuntu.com/18.04/ubuntu-18.04.1.0-live-server-amd64.iso'
-    ["server"]='http://cdimage.ubuntu.com/releases/18.04.1/release/ubuntu-18.04.1-server-amd64.iso'
-)
 zero="$(readlink -f "$0")"
 zero_dir="${zero%/*}"
 exec 3>&1
+
 USBInstaller() {
     local block_device="$1" release="${UBUNTU_RELEASE:-18.04}" flavor="${UBUNTU_FLAVOR:-live-server}"
-    local release_sums_url
-    release_sums_url=$(GetSumsUrl "$release" "$flavor")
-    echo "$release_sums_url"
-    exit 1
-    flavor="${2:-ubuntu-18.04.1-desktop}" mountpoint ubuntu_file
-    local flavor_url="${flavors[$flavor]}"
-    echo "Installing $flavor_url to $block_device"
+    local ubuntu_file
+    ubuntu_file=$(FetchISO "$release" "$flavor")
+    [ -n "$ubuntu_file" ]
+    echo "Installing $ubuntu_file to $block_device"
     cleanup_devs+=("$block_device")
-    ubuntu_file=$(FetchISO "$flavor_url")
-    echo "ISO file: $ubuntu_file"
     UnmountBlockDeviceFilesystems "$block_device"
     mountpoint=$(MakeBootableBlockDevice "$block_device")
     cleanup_dirs+=("$mountpoint")
@@ -34,22 +24,49 @@ USBInstaller() {
     exit 0
 }
 
-GetSumsUrl() {
-    local release="$1" flavor="$2" sum_url
-    local base_urls=(
-	http://releases.ubuntu.com/
-	http://old-releases.ubuntu.com/releases/
-    )
-    for base_url in "${base_urls[@]}"; do
-	sum_url=$(CheckSumAtBaseURLForRelease "$base_url" "$release" "$flavor")
-	if [ -n "$sum_url" ]; then
-	    break
-	fi
-    done
+FetchISO() {
+    set -e
+    local release="$1" flavor="$2" sums_url
+    sums_url=$(FetchSumsUrl "$release" "$flavor")
+    [ -n "$sums_url" ]
+    iso_url=$(GetISOURL "$sums_url" "$release" "$flavor")
+    [ -n "$iso_url" ]
+    cache_file="${zero_dir}/${iso_url##*/}"
+    if ! CheckCachedFile "$cache_file" "$sums_url"; then
+	rm -vf "$cache_file" 1>&3
+	curl --location --fail --output "$cache_file" "$iso_url" 1>&3
+	CheckCachedFile "$cache_file" "$sums_url" 1>&3
+    fi
+    echo "$cache_file"
 }
 
-CheckSumAtBaseURLForRelease() {
-    local url="$1" release="$2" flavor="$3" release_regex sum_url
+FetchSumsUrl() {
+    local release="$1" flavor="$2" sums_url sums_try_url
+    local base_urls=(
+	http://old-releases.ubuntu.com/releases/
+	http://releases.ubuntu.com/
+    )
+    for base_url in "${base_urls[@]}"; do
+	sums_try_url=$(TryToFetchSumsFile "$base_url" "$release" "$flavor")
+	if [ -n "$sums_try_url" ]; then
+	    sums_url="$sums_try_url"
+	fi
+    done
+    [ -n "$sums_url" ]
+    echo "$sums_url"
+}
+
+TryToFetchSumsFile() {
+    local url="$1" release="$2" flavor="$3" regex sums_url
+    sums_url="$url$release/SHA256SUMS"
+    regex=$(CalcRegex "$release" "$flavor")
+    if curl --silent --fail "$sums_url" | grep -E -q "$regex"; then
+	echo "$sums_url"
+    fi
+}
+
+CalcRegex() {
+    local release="$1" flavor="$2" release_regex
     case "$release" in
 	[1-9][0-9].[01][40].0)
 	    release_regex="${release%.0}" ;;
@@ -58,22 +75,22 @@ CheckSumAtBaseURLForRelease() {
 	*)
 	    release_regex="${release}" ;;
     esac
-    sum_url="$url$release/SHA256SUMS"
-    if curl -q "$sum_url" | grep -E -q "\*ubuntu-$release_regex-$flavor-"; then
-	echo "$sum_url"
-    fi
+    echo "\*ubuntu-$release_regex-$flavor.*\.iso$"
 }
 
-FetchISO() {
-    local url="$1" sha_url="${1%/*}/SHA256SUMS" file="${1##*/}" sha_file="$zero_dir/SHA256SUMS"
-    local full_file="$zero_dir/$file"
-    curl --location --silent --show-error "$sha_url" | grep -F "$file" > "$sha_file"
-    if ! (cd "$zero_dir"; sha256sum --quiet --check "$sha_file" 1>&3 ); then
-	rm -vf "$full_file" 1>&3
-	curl --location --fail --output "$full_file" "$url" 1>&3
-	(cd "$zero_dir"; sha256sum --quiet --check "$sha_file") 1>&3
-    fi
-    echo "$full_file"
+GetISOURL() {
+    local sums_url="$1" release="$2" flavor="$3" sum_line
+    regex=$(CalcRegex "$release" "$flavor")
+    sum_line=$(curl --silent --fail "$sums_url" | grep -E "$regex")
+    echo "${sums_url%/*}/${sum_line##*\*}"
+}
+
+CheckCachedFile() {
+    local cache_file="$1" sums_url="$2"
+    local shasum_file="${cache_file}.sha256"
+    curl --silent --fail "$sums_url" |
+	awk -v cache_file="${cache_file##*/}" -F\* '$2==cache_file' > "${shasum_file}"
+    (cd "$zero_dir"; sha256sum --quiet --check "${shasum_file}" 1>&3)
 }
 
 UnmountBlockDeviceFilesystems() {
