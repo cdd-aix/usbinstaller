@@ -52,6 +52,7 @@ UnmountBlockDeviceFilesystems() {
 
 MakeBootableBlockDevice() {
     local block_device="$1" block_device_partition="${1}1" wait
+    dd if=/dev/zero of="${block_device}" seek=1 count=2047
     parted -a optimal "$block_device" mklabel msdos 1>&3
     parted -a optimal "$block_device" -- mkpart primary fat32 1M -1M 1>&3
     for wait in 1 2 3 4 5; do
